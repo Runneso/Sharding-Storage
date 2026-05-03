@@ -1,0 +1,4 @@
+strategy,keys,ops,threads,moved_keys_percent,migration_time_ms
+range,10000,10000,16,49.99,461.6675
+hash_mod_n,10000,10000,16,80.06,661.8105
+consistent_hashing,10000,10000,16,19.70,1729.0762
