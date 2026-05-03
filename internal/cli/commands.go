@@ -553,7 +553,7 @@ func cmdStats(state *State, args []string, out io.Writer) error {
 		maxAvg = float64(maxCount) / avg
 	}
 
-	_, _ = fmt.Fprintf(out, "total_keys=%d nodes=%d avg=%.2f stddev=%.2f stddev/avg=%.4f max/avg=%.4f\n",
+	_, _ = fmt.Fprintf(out, "total_keys=%d nodes=%d avg=%.2f stddev=%.2f stddev/mean=%.4f max/avg=%.4f\n",
 		total,
 		len(ids),
 		avg,
