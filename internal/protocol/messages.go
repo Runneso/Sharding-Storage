@@ -8,16 +8,18 @@ import (
 
 const (
 	// Client -> Router
-	TypeClientPutRequest    = "CLIENT_PUT_REQUEST"
-	TypeClientDeleteRequest = "CLIENT_DELETE_REQUEST"
-	TypeClientGetRequest    = "CLIENT_GET_REQUEST"
-	TypeClientDumpRequest   = "CLIENT_DUMP_REQUEST"
+	TypeClientPutRequest      = "CLIENT_PUT_REQUEST"
+	TypeClientDeleteRequest   = "CLIENT_DELETE_REQUEST"
+	TypeClientGetRequest      = "CLIENT_GET_REQUEST"
+	TypeClientDumpRequest     = "CLIENT_DUMP_REQUEST"
+	TypeClientRangeGetRequest = "CLIENT_RANGE_GET_REQUEST"
 
 	// Router -> Client
-	TypeClientPutResponse    = "CLIENT_PUT_RESPONSE"
-	TypeClientDeleteResponse = "CLIENT_DELETE_RESPONSE"
-	TypeClientGetResponse    = "CLIENT_GET_RESPONSE"
-	TypeClientDumpResponse   = "CLIENT_DUMP_RESPONSE"
+	TypeClientPutResponse      = "CLIENT_PUT_RESPONSE"
+	TypeClientDeleteResponse   = "CLIENT_DELETE_RESPONSE"
+	TypeClientGetResponse      = "CLIENT_GET_RESPONSE"
+	TypeClientDumpResponse     = "CLIENT_DUMP_RESPONSE"
+	TypeClientRangeGetResponse = "CLIENT_RANGE_GET_RESPONSE"
 
 	// Router -> Shard
 	TypeShardPutRequest    = "SHARD_PUT_REQUEST"
@@ -37,12 +39,15 @@ const (
 	TypeClusterSetStrategy = "CLUSTER_SET_STRATEGY"
 	TypeClusterSetVNodes   = "CLUSTER_SET_VNODES"
 	TypeClusterSetRanges   = "CLUSTER_SET_RANGES"
+	TypeClusterSetWeight   = "CLUSTER_SET_WEIGHT"
 	TypeClusterMigrateData = "CLUSTER_MIGRATE_DATA"
 	TypeClusterInfo        = "CLUSTER_INFO"
+	TypeRingInfoRequest    = "RING_INFO_REQUEST"
 
 	// Router -> Client
-	TypeClusterAck   = "CLUSTER_ACK"
-	TypeClusterState = "CLUSTER_STATE"
+	TypeClusterAck       = "CLUSTER_ACK"
+	TypeClusterState     = "CLUSTER_STATE"
+	TypeRingInfoResponse = "RING_INFO_RESPONSE"
 )
 
 type BaseMessage struct {
@@ -99,14 +104,33 @@ func NewClientGetRequest(requestID uuid.UUID, key string) *ClientGetRequest {
 
 type ClientDumpRequest struct {
 	BaseMessage
+	NodeID string `json:"node_id"`
 }
 
-func NewClientDumpRequest(requestID uuid.UUID) *ClientDumpRequest {
+func NewClientDumpRequest(requestID uuid.UUID, nodeID string) *ClientDumpRequest {
 	return &ClientDumpRequest{
 		BaseMessage: BaseMessage{
 			RequestID: requestID,
 			Type:      TypeClientDumpRequest,
 		},
+		NodeID: nodeID,
+	}
+}
+
+type ClientRangeGetRequest struct {
+	BaseMessage
+	LeftKey  string `json:"left_key"`
+	RightKey string `json:"right_key"`
+}
+
+func NewClientRangeGetRequest(requestID uuid.UUID, leftKey, rightKey string) *ClientRangeGetRequest {
+	return &ClientRangeGetRequest{
+		BaseMessage: BaseMessage{
+			RequestID: requestID,
+			Type:      TypeClientRangeGetRequest,
+		},
+		LeftKey:  leftKey,
+		RightKey: rightKey,
 	}
 }
 
@@ -197,6 +221,18 @@ type ClientDumpResponse struct {
 func NewClientDumpResponse(requestID uuid.UUID, node NodeInfo, error error, dump Dump) *ClientDumpResponse {
 	return &ClientDumpResponse{
 		BaseClientResponse: *NewBaseClientResponse(requestID, TypeClientDumpResponse, node, error),
+		Dump:               dump,
+	}
+}
+
+type ClientRangeGetResponse struct {
+	BaseClientResponse
+	Dump Dump `json:"dump"`
+}
+
+func NewClientRangeGetResponse(requestID uuid.UUID, node NodeInfo, error error, dump Dump) *ClientRangeGetResponse {
+	return &ClientRangeGetResponse{
+		BaseClientResponse: *NewBaseClientResponse(requestID, TypeClientRangeGetResponse, node, error),
 		Dump:               dump,
 	}
 }
@@ -369,10 +405,10 @@ func NewClusterSetStrategy(requestID uuid.UUID, strategy string) *ClusterSetStra
 
 type ClusterSetVNodes struct {
 	BaseMessage
-	Count int64 `json:"count"`
+	Count int `json:"count"`
 }
 
-func NewClusterSetVNodes(requestID uuid.UUID, count int64) *ClusterSetVNodes {
+func NewClusterSetVNodes(requestID uuid.UUID, count int) *ClusterSetVNodes {
 	return &ClusterSetVNodes{
 		BaseMessage: BaseMessage{
 			RequestID: requestID,
@@ -397,6 +433,23 @@ func NewClusterSetRanges(requestID uuid.UUID, boundaries Boundaries) *ClusterSet
 	}
 }
 
+type ClusterSetWeight struct {
+	BaseMessage
+	NodeID string `json:"node_id"`
+	Weight int    `json:"weight"`
+}
+
+func NewClusterSetWeight(requestID uuid.UUID, weight int, nodeID string) *ClusterSetWeight {
+	return &ClusterSetWeight{
+		BaseMessage: BaseMessage{
+			RequestID: requestID,
+			Type:      TypeClusterSetWeight,
+		},
+		NodeID: nodeID,
+		Weight: weight,
+	}
+}
+
 type ClusterMigrateData struct {
 	BaseMessage
 }
@@ -412,14 +465,42 @@ func NewClusterMigrateData(requestID uuid.UUID) *ClusterMigrateData {
 
 type ClusterAck struct {
 	BaseMessage
+	Status    string `json:"status"` // "OK" or "ERROR"
+	ErrorCode string `json:"error_code,omitempty"`
+	ErrorMsg  string `json:"error_message,omitempty"`
 }
 
-func NewClusterAck(requestID uuid.UUID) *ClusterAck {
+func NewClusterAck(requestID uuid.UUID, err error) *ClusterAck {
+	if err == nil {
+		return &ClusterAck{
+			BaseMessage: BaseMessage{
+				RequestID: requestID,
+				Type:      TypeClusterAck,
+			},
+			Status: StatusOK,
+		}
+	}
+
+	if ae, ok := errors.AsType[ApplicationError](err); ok {
+		return &ClusterAck{
+			BaseMessage: BaseMessage{
+				RequestID: requestID,
+				Type:      TypeClusterAck,
+			},
+			Status:    StatusError,
+			ErrorCode: ae.ErrorCode(),
+			ErrorMsg:  ae.Error(),
+		}
+	}
+
 	return &ClusterAck{
 		BaseMessage: BaseMessage{
 			RequestID: requestID,
 			Type:      TypeClusterAck,
 		},
+		Status:    StatusError,
+		ErrorCode: ErrorInvalidClusterConfig,
+		ErrorMsg:  err.Error(),
 	}
 }
 
@@ -433,5 +514,48 @@ func NewClusterInfo(requestID uuid.UUID) *ClusterInfo {
 			RequestID: requestID,
 			Type:      TypeClusterInfo,
 		},
+	}
+}
+
+type ClusterState struct {
+	BaseMessage
+	ClusterConfig ClusterConfig `json:"cluster_config"`
+}
+
+func NewClusterState(requestID uuid.UUID, config ClusterConfig) *ClusterState {
+	return &ClusterState{
+		BaseMessage: BaseMessage{
+			RequestID: requestID,
+			Type:      TypeClusterState,
+		},
+		ClusterConfig: config,
+	}
+}
+
+type RingInfoRequest struct {
+	BaseMessage
+}
+
+func NewRingInfoRequest(requestID uuid.UUID) *RingInfoRequest {
+	return &RingInfoRequest{
+		BaseMessage: BaseMessage{
+			RequestID: requestID,
+			Type:      TypeRingInfoRequest,
+		},
+	}
+}
+
+type RingInfoResponse struct {
+	BaseMessage
+	Ring []RingNode `json:"ring"`
+}
+
+func NewRingInfoResponse(requestID uuid.UUID, ring []RingNode) *RingInfoResponse {
+	return &RingInfoResponse{
+		BaseMessage: BaseMessage{
+			RequestID: requestID,
+			Type:      TypeRingInfoResponse,
+		},
+		Ring: ring,
 	}
 }
